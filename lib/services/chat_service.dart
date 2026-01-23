@@ -6,7 +6,7 @@ import '../models/message.dart';
 
 class ChatService {
   // Update this IP to match your backend
-  static const String baseUrl = 'http://192.168.0.213:8000';
+  static const String baseUrl = 'https://clarity-backend-02a2.onrender.com';
   final Dio _dio = Dio();
 
   Stream<String> sendMessage(List<Message> conversationHistory) async* {
@@ -24,8 +24,8 @@ class ChatService {
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
           },
-          sendTimeout: const Duration(seconds: 20),
-          receiveTimeout: const Duration(minutes: 2),
+          sendTimeout: const Duration(seconds: 120),
+          receiveTimeout: const Duration(minutes: 120),
         ),
       );
     } on DioException catch (e) {
