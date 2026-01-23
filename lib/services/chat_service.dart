@@ -5,15 +5,9 @@ import 'package:dio/dio.dart';
 import '../models/message.dart';
 
 class ChatService {
-  static const String baseUrl = 'http://192.168.0.213:8000'; // Update with your PC IP
+  // Update this IP to match your backend
+  static const String baseUrl = 'http://192.168.0.213:8000';
   final Dio _dio = Dio();
-
-  String _normalizeChunk(String chunk) {
-    // Clean and normalize each chunk
-    return chunk
-        .replaceAll(RegExp(r'\s+'), ' ') // Multiple spaces to single
-        .trim();
-  }
 
   Stream<String> sendMessage(List<Message> conversationHistory) async* {
     Response<ResponseBody> resp;
@@ -59,52 +53,56 @@ class ChatService {
 
     try {
       await for (final bytes in stream) {
+        // Decode bytes to UTF-8
         final decoded = utf8.decode(bytes, allowMalformed: true);
         buffer.write(decoded);
 
+        // Process complete lines
         final text = buffer.toString();
+        // Split by newlines to handle multiple data chunks in one packet
         final lines = text.split('\n');
-        buffer
-          ..clear()
-          ..write(lines.removeLast());
+
+        // Keep the incomplete last line in the buffer
+        buffer.clear();
+        buffer.write(lines.removeLast());
 
         for (final raw in lines) {
-          final line = raw.trimRight();
+          final line = raw.trim();
           if (line.isEmpty) continue;
 
-          if (line.startsWith('event:')) {
-            continue;
-          }
-
-          if (line.startsWith('data:')) {
-            final data = line.substring(5).trimLeft();
+          // Handle SSE format
+          if (line.startsWith('data: ')) {
+            final data = line.substring(6).trim(); // Remove "data: "
 
             if (data == '[DONE]') return;
 
-            if (data.startsWith('Error:') ||
-                data.startsWith('Exception') ||
-                data.startsWith('HTTP')) {
-              yield 'Error: $data';
-              continue;
-            }
+            try {
+              // --- CRITICAL FIX START ---
+              // 1. Parse the string as JSON
+              final jsonMap = jsonDecode(data);
 
-            if (data.isNotEmpty) {
-              final normalized = _normalizeChunk(data);
-              if (normalized.isNotEmpty) {
-                yield normalized;
+              // 2. Extract the actual content from the OpenRouter structure
+              // Structure is usually: choices[0]['delta']['content']
+              if (jsonMap['choices'] != null &&
+                  (jsonMap['choices'] as List).isNotEmpty) {
+
+                final delta = jsonMap['choices'][0]['delta'];
+                if (delta != null && delta['content'] != null) {
+                  final content = delta['content'] as String;
+
+                  // 3. Yield the actual text content
+                  if (content.isNotEmpty) {
+                    yield content;
+                  }
+                }
               }
-            }
-          }
-        }
-      }
+              // --- CRITICAL FIX END ---
 
-      final last = buffer.toString().trimRight();
-      if (last.startsWith('data:')) {
-        final data = last.substring(5).trimLeft();
-        if (data.isNotEmpty && data != '[DONE]') {
-          final normalized = _normalizeChunk(data);
-          if (normalized.isNotEmpty) {
-            yield normalized;
+            } catch (e) {
+              // If it's not JSON (like an error message), yield it directly
+              // or ignore parsing errors for keep-alive packets
+              print("Error parsing chunk: $e");
+            }
           }
         }
       }

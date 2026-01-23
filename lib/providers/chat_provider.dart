@@ -1,215 +1,150 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 import '../models/message.dart';
 import '../services/chat_service.dart';
 import '../services/storage_service.dart';
 
+// --- State Class ---
 class ChatState {
   final List<Message> messages;
-  final bool isLoading;
-  final String? error;
+  final bool isLoading; // Waiting for response to start
+  final String? currentChatId; // ID of the current conversation
 
-  const ChatState({
+  ChatState({
     this.messages = const [],
     this.isLoading = false,
-    this.error,
+    this.currentChatId,
   });
 
   ChatState copyWith({
     List<Message>? messages,
     bool? isLoading,
-    String? error,
+    String? currentChatId,
   }) {
     return ChatState(
       messages: messages ?? this.messages,
       isLoading: isLoading ?? this.isLoading,
-      error: error ?? this.error,
+      currentChatId: currentChatId ?? this.currentChatId,
     );
   }
 }
 
-class ChatProvider extends StateNotifier<ChatState> {
+// --- Provider Notifier ---
+class ChatNotifier extends StateNotifier<ChatState> {
   final ChatService _chatService = ChatService();
+  final StorageService _storageService = StorageService();
 
-  ChatProvider() : super(const ChatState()) {
-    loadChatHistory();
-  }
+  ChatNotifier() : super(ChatState(currentChatId: const Uuid().v4()));
 
-  Future<void> loadChatHistory() async {
-    final savedMessages = await StorageService.loadChatHistory();
-    if (savedMessages.isNotEmpty) {
-      state = state.copyWith(messages: savedMessages);
-    }
-  }
-
-  Future<void> _saveChatHistory() async {
-    await StorageService.saveChatHistory(state.messages);
-  }
-
-  void addUserMessage(String content) {
-    final userMessage = Message(
-      role: 'user',
-      content: content,
-      timestamp: DateTime.now(),
+  // 1. Send Message
+  Future<void> sendMessage(String content) async {
+    // FIX: Added timestamp: DateTime.now()
+    final userMsg = Message(
+        role: 'user',
+        content: content,
+        timestamp: DateTime.now()
     );
 
     state = state.copyWith(
-      messages: [...state.messages, userMessage],
-      error: null,
+      messages: [...state.messages, userMsg],
+      isLoading: true, // Start loading animation
     );
 
-    _saveChatHistory();
-  }
-
-  // IMPROVED SPACING LOGIC
-  String _ensureProperSpacing(String current, String newChunk) {
-    if (current.isEmpty) return newChunk;
-    if (newChunk.isEmpty) return current;
-
-    // Clean the new chunk
-    final cleanChunk = newChunk.trim();
-    if (cleanChunk.isEmpty) return current;
-
-    // Check what current text ends with
-    final currentTrimmed = current.trimRight();
-    if (currentTrimmed.isEmpty) return cleanChunk;
-
-    final lastChar = currentTrimmed[currentTrimmed.length - 1];
-    final firstChar = cleanChunk[0];
-
-    // Don't add space if:
-    // 1. Current ends with whitespace or newline
-    // 2. New chunk starts with punctuation
-    // 3. New chunk already starts with space
-    if (RegExp(r'[\s\n]').hasMatch(lastChar) ||
-        RegExp(r'^[,.!?;:\)\]}]').hasMatch(firstChar) ||
-        cleanChunk.startsWith(' ')) {
-      return current + cleanChunk;
-    }
-
-    // Don't add space after punctuation if next is uppercase (sentence start)
-    if (RegExp(r'[.!?]').hasMatch(lastChar) &&
-        RegExp(r'^[A-Z]').hasMatch(firstChar)) {
-      return '$current $cleanChunk';
-    }
-
-    // Add space between words
-    if (RegExp(r'[a-zA-Z0-9]').hasMatch(lastChar) &&
-        RegExp(r'^[a-zA-Z0-9]').hasMatch(firstChar)) {
-      return '$current $cleanChunk';
-    }
-
-    return current + cleanChunk;
-  }
-
-  // IMPROVED FINAL CLEANUP
-  String _cleanupResponse(String response) {
-    var cleaned = response;
-
-    // Fix common spacing issues
-    cleaned = cleaned.replaceAll(RegExp(r'([a-z])([A-Z])'), r'$1 $2'); // camelCase to spaced
-    cleaned = cleaned.replaceAll(RegExp(r'(\w)(\w+)\s*:\s*'), r'$1$2: '); // Fix colons
-    cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' '); // Multiple spaces to single
-    cleaned = cleaned.replaceAll(RegExp(r'\n\s+'), '\n'); // Remove spaces after newlines
-    cleaned = cleaned.replaceAll(RegExp(r'\s+\n'), '\n'); // Remove spaces before newlines
-    cleaned = cleaned.replaceAll(RegExp(r'\n{3,}'), '\n\n'); // Max 2 newlines
-
-    // Fix punctuation spacing
-    cleaned = cleaned.replaceAllMapped(RegExp(r'\s+([,.!?;:])'), (m) => m[1]!);
-    cleaned = cleaned.replaceAllMapped(RegExp(r'([,.!?;:])([A-Za-z0-9])'), (m) => '${m[1]} ${m[2]}');
-
-    // Fix markdown spacing
-    cleaned = cleaned.replaceAll(RegExp(r'\*\*\s+'), '**');
-    cleaned = cleaned.replaceAll(RegExp(r'\s+\*\*'), '**');
-    cleaned = cleaned.replaceAll(RegExp(r'###\s+'), '### ');
-    cleaned = cleaned.replaceAll(RegExp(r'##\s+'), '## ');
-
-    return cleaned.trim();
-  }
-
-  Future<void> sendMessage(String userMessage) async {
-    addUserMessage(userMessage);
-
-    final assistantMessage = Message(
-      role: 'assistant',
-      content: '',
-      timestamp: DateTime.now(),
+    // Prepare AI Message Placeholder
+    // FIX: Added timestamp
+    String aiResponse = "";
+    final aiMsg = Message(
+        role: 'assistant',
+        content: "",
+        timestamp: DateTime.now()
     );
-
-    state = state.copyWith(
-      messages: [...state.messages, assistantMessage],
-      isLoading: true,
-      error: null,
-    );
-
-    String assistantResponse = '';
-    bool gotFirstChunk = false;
 
     try {
-      final conversationHistory = state.messages
-          .where((m) => m.role != 'assistant' || m.content.isNotEmpty)
-          .toList();
+      final stream = _chatService.sendMessage(state.messages);
 
-      await for (final chunk in _chatService.sendMessage(conversationHistory)) {
-        if (!gotFirstChunk) {
-          gotFirstChunk = true;
-          state = state.copyWith(isLoading: false);
+      bool firstChunk = true;
+
+      await for (final chunk in stream) {
+        aiResponse += chunk;
+
+        if (firstChunk) {
+          // Response started! Stop "Loading" (dots) and show the message bubble
+          // This prevents the "Double Icon" bug
+          state = state.copyWith(
+              isLoading: false,
+              messages: [...state.messages, aiMsg.copyWith(content: aiResponse)]
+          );
+          firstChunk = false;
+        } else {
+          // Update the last message with new content
+          final updatedMessages = List<Message>.from(state.messages);
+          updatedMessages.last = updatedMessages.last.copyWith(content: aiResponse);
+          state = state.copyWith(messages: updatedMessages);
         }
-
-        // Use improved spacing logic
-        assistantResponse = _ensureProperSpacing(assistantResponse, chunk);
-
-        final updatedMessages = state.messages.toList();
-        updatedMessages[updatedMessages.length - 1] = Message(
-          role: 'assistant',
-          content: assistantResponse,
-          timestamp: DateTime.now(),
-        );
-
-        state = state.copyWith(messages: updatedMessages);
       }
 
-      // Final cleanup with improved logic
-      assistantResponse = _cleanupResponse(assistantResponse);
-
-      final finalMessages = state.messages.toList();
-      finalMessages[finalMessages.length - 1] = Message(
-        role: 'assistant',
-        content: assistantResponse,
-        timestamp: DateTime.now(),
-      );
-
-      state = state.copyWith(
-        messages: finalMessages,
-        isLoading: false,
-      );
-
-      _saveChatHistory();
+      // Auto-save after response is complete
+      _autoSave();
 
     } catch (e) {
+      // FIX: Added timestamp to error message
       state = state.copyWith(
-        error: e.toString(),
-        isLoading: false,
+          isLoading: false,
+          messages: [...state.messages, Message(
+              role: 'assistant',
+              content: "Error: $e",
+              timestamp: DateTime.now()
+          )]
       );
     }
   }
 
-  Future<void> clearChat() async {
-    await StorageService.clearChatHistory();
-    state = const ChatState();
+  // 2. Save Chat Manually
+  Future<void> saveChat() async {
+    if (state.messages.isEmpty) return;
+
+    // Use the first user message as the title, or "New Chat"
+    String title = "New Chat";
+    final firstUserMsg = state.messages.firstWhere(
+            (m) => m.role == 'user',
+        orElse: () => Message(role: 'user', content: 'New Chat', timestamp: DateTime.now())
+    );
+
+    title = firstUserMsg.content.length > 30
+        ? firstUserMsg.content.substring(0, 30)
+        : firstUserMsg.content;
+
+    await _storageService.saveChat(state.currentChatId!, title, state.messages);
   }
 
-  Future<void> saveConversation(String title) async {
+  // Internal Auto-save
+  Future<void> _autoSave() async {
     if (state.messages.isNotEmpty) {
-      await StorageService.saveConversation(title, state.messages);
+      await saveChat();
     }
   }
 
-  Future<void> loadConversation(String conversationKey) async {
-    final messages = await StorageService.loadConversation(conversationKey);
-    state = state.copyWith(messages: messages);
+  // 3. Load Chat from History
+  Future<void> loadChat(String chatId) async {
+    state = state.copyWith(isLoading: true);
+    final messages = await _storageService.loadChat(chatId);
+    state = state.copyWith(
+        messages: messages,
+        currentChatId: chatId,
+        isLoading: false
+    );
+  }
+
+  // 4. New Chat / Clear
+  void clearChat() {
+    state = ChatState(
+        messages: [],
+        isLoading: false,
+        currentChatId: const Uuid().v4() // Generate new ID
+    );
   }
 }
 
-final chatProvider = StateNotifierProvider<ChatProvider, ChatState>((ref) {
-  return ChatProvider();
+final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((ref) {
+  return ChatNotifier();
 });

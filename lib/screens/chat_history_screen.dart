@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:iconsax/iconsax.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../services/storage_service.dart';
 import '../providers/chat_provider.dart';
 
@@ -11,128 +13,87 @@ class ChatHistoryScreen extends ConsumerStatefulWidget {
 }
 
 class _ChatHistoryScreenState extends ConsumerState<ChatHistoryScreen> {
-  List<Map<String, dynamic>> conversations = [];
-  bool isLoading = true;
+  final StorageService _storage = StorageService();
+  late Future<List<Map<String, dynamic>>> _historyFuture;
 
   @override
   void initState() {
     super.initState();
-    loadConversations();
+    _refreshHistory();
   }
 
-  Future<void> loadConversations() async {
-    final loadedConversations = await StorageService.getConversationsList();
+  void _refreshHistory() {
     setState(() {
-      conversations = loadedConversations;
-      isLoading = false;
+      _historyFuture = _storage.getHistory();
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0F0F0F),
+      backgroundColor: Colors.black,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1A1A1A),
-        title: const Text(
-          'Chat History',
-          style: TextStyle(color: Colors.white),
+        backgroundColor: Colors.black,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
         ),
-        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text("History", style: GoogleFonts.inter(color: Colors.white)),
       ),
-      body: isLoading
-          ? const Center(
-        child: CircularProgressIndicator(
-          color: Color(0xFF10A37F),
-        ),
-      )
-          : conversations.isEmpty
-          ? const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.history,
-              size: 64,
-              color: Color(0xFF6C7293),
-            ),
-            SizedBox(height: 16),
-            Text(
-              'No saved conversations',
-              style: TextStyle(
-                color: Color(0xFF6C7293),
-                fontSize: 18,
-              ),
-            ),
-            SizedBox(height: 8),
-            Text(
-              'Start chatting and save conversations to see them here',
-              style: TextStyle(
-                color: Color(0xFF6C7293),
-                fontSize: 14,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      )
-          : ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: conversations.length,
-        itemBuilder: (context, index) {
-          final conversation = conversations[index];
-          final date = DateTime.fromMillisecondsSinceEpoch(
-            conversation['timestamp'],
-          );
+      body: FutureBuilder<List<Map<String, dynamic>>>(
+        future: _historyFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator(color: Color(0xFF4D9CFF)));
+          }
 
-          return Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFF2D2D30),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: const Color(0xFF404040),
-                width: 1,
-              ),
-            ),
-            child: ListTile(
-              leading: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF10A37F),
-                  borderRadius: BorderRadius.circular(8),
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            return Center(
+              child: Text("No saved chats", style: TextStyle(color: Colors.grey[600])),
+            );
+          }
+
+          final history = snapshot.data!;
+
+          return ListView.builder(
+            itemCount: history.length,
+            itemBuilder: (context, index) {
+              final chat = history[index];
+              return Dismissible(
+                key: Key(chat['id']),
+                direction: DismissDirection.endToStart,
+                background: Container(
+                  color: Colors.red.shade900,
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: 20),
+                  child: const Icon(Icons.delete, color: Colors.white),
                 ),
-                child: const Icon(
-                  Icons.chat,
-                  color: Colors.white,
-                  size: 20,
+                onDismissed: (_) {
+                  _storage.deleteChat(chat['id']);
+                },
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  title: Text(
+                    chat['title'] ?? "Untitled",
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    chat['preview'] ?? "...",
+                    style: TextStyle(color: Colors.grey[600]),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: const Icon(Iconsax.arrow_right_3, color: Colors.grey, size: 16),
+                  onTap: () {
+                    // Load the chat and close history screen
+                    ref.read(chatProvider.notifier).loadChat(chat['id']);
+                    Navigator.pop(context);
+                  },
                 ),
-              ),
-              title: Text(
-                conversation['title'],
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              subtitle: Text(
-                '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}',
-                style: const TextStyle(
-                  color: Color(0xFF6C7293),
-                ),
-              ),
-              trailing: const Icon(
-                Icons.arrow_forward_ios,
-                color: Color(0xFF6C7293),
-                size: 16,
-              ),
-              onTap: () {
-                ref.read(chatProvider.notifier).loadConversation(
-                  conversation['key'],
-                );
-                Navigator.pop(context);
-              },
-            ),
+              );
+            },
           );
         },
       ),

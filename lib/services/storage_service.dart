@@ -3,110 +3,73 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
 
 class StorageService {
-  static const String _chatHistoryKey = 'clarity_chat_history';
+  static const String _historyKey = 'chat_history_index';
 
-  // Save chat history
-  static Future<void> saveChatHistory(List<Message> messages) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final messagesJson = messages.map((msg) => msg.toJson()).toList();
-      final jsonString = jsonEncode(messagesJson);
-      await prefs.setString(_chatHistoryKey, jsonString);
-    } catch (e) {
-      print('Error saving chat history: $e');
+  // Save a chat session
+  Future<void> saveChat(String chatId, String title, List<Message> messages) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // 1. Save the messages for this specific chat ID
+    final messagesJson = jsonEncode(messages.map((m) => m.toJson()).toList());
+    await prefs.setString('chat_$chatId', messagesJson);
+
+    // 2. Update the index (list of all saved chats)
+    final historyJson = prefs.getString(_historyKey);
+    List<Map<String, dynamic>> history = [];
+
+    if (historyJson != null) {
+      history = List<Map<String, dynamic>>.from(jsonDecode(historyJson));
     }
+
+    // Remove existing entry if updating
+    history.removeWhere((item) => item['id'] == chatId);
+
+    // Add new entry at the top
+    history.insert(0, {
+      'id': chatId,
+      'title': title,
+      'timestamp': DateTime.now().toIso8601String(),
+      'preview': messages.last.content.take(50), // Store snippet
+    });
+
+    await prefs.setString(_historyKey, jsonEncode(history));
   }
 
-  // Load chat history
-  static Future<List<Message>> loadChatHistory() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final jsonString = prefs.getString(_chatHistoryKey);
-
-      if (jsonString == null || jsonString.isEmpty) {
-        return [];
-      }
-
-      final List<dynamic> jsonList = jsonDecode(jsonString);
-      return jsonList.map((json) => Message.fromJson(json)).toList();
-    } catch (e) {
-      print('Error loading chat history: $e');
-      return [];
-    }
+  // Get list of all saved chats (for the History Screen)
+  Future<List<Map<String, dynamic>>> getHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final json = prefs.getString(_historyKey);
+    if (json == null) return [];
+    return List<Map<String, dynamic>>.from(jsonDecode(json));
   }
 
-  // Clear chat history
-  static Future<void> clearChatHistory() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_chatHistoryKey);
-    } catch (e) {
-      print('Error clearing chat history: $e');
-    }
+  // Load a specific chat
+  Future<List<Message>> loadChat(String chatId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final json = prefs.getString('chat_$chatId');
+    if (json == null) return [];
+
+    final List<dynamic> rawList = jsonDecode(json);
+    return rawList.map((m) => Message.fromJson(m)).toList();
   }
 
-  // Save individual conversation with timestamp
-  static Future<void> saveConversation(String title, List<Message> messages) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final conversationKey = 'conversation_$timestamp';
+  // Delete a chat
+  Future<void> deleteChat(String chatId) async {
+    final prefs = await SharedPreferences.getInstance();
 
-      final conversationData = {
-        'title': title,
-        'timestamp': timestamp,
-        'messages': messages.map((msg) => msg.toJson()).toList(),
-      };
+    // Remove messages
+    await prefs.remove('chat_$chatId');
 
-      await prefs.setString(conversationKey, jsonEncode(conversationData));
-
-      // Also update conversations list
-      final conversationsList = await getConversationsList();
-      conversationsList.add({
-        'key': conversationKey,
-        'title': title,
-        'timestamp': timestamp,
-      });
-      await prefs.setString('conversations_list', jsonEncode(conversationsList));
-    } catch (e) {
-      print('Error saving conversation: $e');
+    // Remove from index
+    final historyJson = prefs.getString(_historyKey);
+    if (historyJson != null) {
+      List<Map<String, dynamic>> history = List<Map<String, dynamic>>.from(jsonDecode(historyJson));
+      history.removeWhere((item) => item['id'] == chatId);
+      await prefs.setString(_historyKey, jsonEncode(history));
     }
   }
+}
 
-  // Get list of saved conversations
-  static Future<List<Map<String, dynamic>>> getConversationsList() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final jsonString = prefs.getString('conversations_list');
-
-      if (jsonString == null || jsonString.isEmpty) {
-        return [];
-      }
-
-      final List<dynamic> jsonList = jsonDecode(jsonString);
-      return jsonList.cast<Map<String, dynamic>>();
-    } catch (e) {
-      print('Error loading conversations list: $e');
-      return [];
-    }
-  }
-
-  // Load specific conversation
-  static Future<List<Message>> loadConversation(String conversationKey) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final jsonString = prefs.getString(conversationKey);
-
-      if (jsonString == null || jsonString.isEmpty) {
-        return [];
-      }
-
-      final Map<String, dynamic> conversationData = jsonDecode(jsonString);
-      final List<dynamic> messagesJson = conversationData['messages'];
-      return messagesJson.map((json) => Message.fromJson(json)).toList();
-    } catch (e) {
-      print('Error loading conversation: $e');
-      return [];
-    }
-  }
+extension StringExtension on String {
+  String take(int n) => length > n ? '${substring(0, n)}...' : this;
 }

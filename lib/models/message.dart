@@ -3,32 +3,32 @@ class Message {
   final String content;
   final DateTime timestamp;
 
-  const Message({
+  Message({
     required this.role,
     required this.content,
     required this.timestamp,
   });
 
+  // Convert to Map for JSON storage
   Map<String, dynamic> toJson() {
     return {
       'role': role,
       'content': content,
+      'timestamp': timestamp.toIso8601String(),
     };
   }
 
+  // Create from Map (JSON)
   factory Message.fromJson(Map<String, dynamic> json) {
     return Message(
-      role: json['role'] ?? '',
-      content: json['content'] ?? '',
-      timestamp: DateTime.now(),
+      role: json['role'] as String,
+      content: json['content'] as String,
+      timestamp: DateTime.parse(json['timestamp'] as String),
     );
   }
 
-  Message copyWith({
-    String? role,
-    String? content,
-    DateTime? timestamp,
-  }) {
+  // Helper to copy object with changes
+  Message copyWith({String? role, String? content, DateTime? timestamp}) {
     return Message(
       role: role ?? this.role,
       content: content ?? this.content,
