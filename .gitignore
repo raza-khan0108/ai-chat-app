@@ -18,6 +18,18 @@ migrate_working_dir/
 *.iws
 .idea/
 
+# Secrets
+.env
+backend/.env
+
+# Python
+venv/
+__pycache__/
+
+# Flutter
+build/
+.dart_tool/
+
 # The .vscode folder contains launch configuration and tasks you configure in
 # VS Code which you may wish to be included in version control, so this line
 # is commented out by default.
